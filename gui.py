@@ -1,5 +1,6 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
+from datetime import datetime # Bu satırı eklediğimizden emin olalım!
 
 class MetroSantiyeApp:
     def __init__(self, root, db):
@@ -439,6 +440,7 @@ class MetroSantiyeApp:
             # Örneğin, 'Tamamlandı' için yeşil, 'Beklemede' için turuncu vb.
             # Şu an için sadece ekleyelim:
             self.tasks_tree.insert("", "end", values=task)
+
     # --- Görev Ekleme ---
     def add_task(self):
         add_window = tk.Toplevel(self.root)
@@ -624,12 +626,285 @@ class MetroSantiyeApp:
             self.load_tasks_data()
         else:
             messagebox.showinfo("İptal Edildi", "Görev durumu güncelleme işlemi iptal edildi.")
+
+    # --- Acil Durum Bildirim Modülü ---
+    # --- Acil Durum Bildirim Modülü ---
     def show_emergency_module(self):
         self.clear_content_frame()
         tk.Label(self.content_frame, text="Acil Durum Bildirim Modülü", font=("Arial", 16, "bold"), bg="#ecf0f1").pack(pady=20)
-        tk.Label(self.content_frame, text="Bu bölüm acil durum bildirimlerini içerecektir.", bg="#ecf0f1").pack(pady=10)
 
-    def show_reports_module(self): # Burası düzeltildi!
+        # Acil durum listesi için Treeview
+        columns = ("ID", "Tarih", "Saat", "Tür", "Açıklama", "Etkilenen Personel (ID)", "Etkilenen Ekipman (ID)", "Alınan Aksiyon")
+        self.emergency_tree = ttk.Treeview(self.content_frame, columns=columns, show="headings")
+        for col in columns:
+            self.emergency_tree.heading(col, text=col)
+            self.emergency_tree.column(col, width=120)
+        self.emergency_tree.pack(pady=10, padx=10, fill="both", expand=True)
+
+        self.load_emergency_data() # Verileri yükle
+
+        # Düğmeler
+        button_frame = tk.Frame(self.content_frame, bg="#ecf0f1")
+        button_frame.pack(pady=10)
+        tk.Button(button_frame, text="Yeni Acil Durum Kaydı", command=self.add_emergency).pack(side="left", padx=5)
+        tk.Button(button_frame, text="Acil Durum Düzenle", command=self.edit_emergency).pack(side="left", padx=5)
+        tk.Button(button_frame, text="Acil Durum Sil", command=self.delete_emergency).pack(side="left", padx=5)
+    def load_emergency_data(self):
+        for row in self.emergency_tree.get_children():
+            self.emergency_tree.delete(row)
+        
+        emergency_data = self.db.fetch_all("""
+            SELECT 
+                e.id, 
+                e.date, 
+                e.time, 
+                e.type, 
+                e.description, 
+                COALESCE(p.name || ' (ID: ' || p.id || ')', 'Yok') AS affected_person_info,
+                COALESCE(eq.name || ' (ID: ' || eq.id || ')', 'Yok') AS affected_equipment_info,
+                e.action_taken
+            FROM emergency_events e
+            LEFT JOIN personnel p ON e.affected_person = p.id
+            LEFT JOIN equipment eq ON e.affected_equipment = eq.id
+            ORDER BY e.date DESC, e.time DESC
+        """)
+        for event in emergency_data:
+            self.emergency_tree.insert("", "end", values=event)
+    
+    # --- Yeni Acil Durum Ekleme ---
+    def add_emergency(self):
+        add_window = tk.Toplevel(self.root)
+        add_window.title("Yeni Acil Durum Kaydı")
+        add_window.geometry("450x550")
+
+        tk.Label(add_window, text="Tarih (YYYY-MM-DD):").pack(pady=5)
+        date_entry = tk.Entry(add_window)
+        date_entry.insert(0, datetime.now().strftime("%Y-%m-%d")) # Varsayılan olarak bugünün tarihini koy
+        date_entry.pack(pady=5, padx=10, fill="x")
+
+        tk.Label(add_window, text="Saat (HH:MM):").pack(pady=5)
+        time_entry = tk.Entry(add_window)
+        time_entry.insert(0, datetime.now().strftime("%H:%M")) # Varsayılan olarak şimdiki saati koy
+        time_entry.pack(pady=5, padx=10, fill="x")
+
+        tk.Label(add_window, text="Acil Durum Türü:").pack(pady=5)
+        type_entry = tk.Entry(add_window)
+        type_entry.pack(pady=5, padx=10, fill="x")
+
+        tk.Label(add_window, text="Açıklama:").pack(pady=5)
+        description_text = tk.Text(add_window, height=4, width=40)
+        description_text.pack(pady=5, padx=10, fill="x")
+
+        tk.Label(add_window, text="Etkilenen Personel:").pack(pady=5)
+        personnel_data = self.db.fetch_all("SELECT id, name FROM personnel")
+        personnel_dict = {f"{p[1]} (ID: {p[0]})": p[0] for p in personnel_data}
+        personnel_names = list(personnel_dict.keys())
+        personnel_names.insert(0, "Yok") # Personel yoksa 'Yok' seçeneği
+
+        affected_person_combobox = ttk.Combobox(add_window, values=personnel_names)
+        affected_person_combobox.set("Yok")
+        affected_person_combobox.pack(pady=5, padx=10, fill="x")
+
+        tk.Label(add_window, text="Etkilenen Ekipman:").pack(pady=5)
+        equipment_data = self.db.fetch_all("SELECT id, name FROM equipment")
+        equipment_dict = {f"{eq[1]} (ID: {eq[0]})": eq[0] for eq in equipment_data}
+        equipment_names = list(equipment_dict.keys())
+        equipment_names.insert(0, "Yok") # Ekipman yoksa 'Yok' seçeneği
+
+        affected_equipment_combobox = ttk.Combobox(add_window, values=equipment_names)
+        affected_equipment_combobox.set("Yok")
+        affected_equipment_combobox.pack(pady=5, padx=10, fill="x")
+
+        tk.Label(add_window, text="Alınan Aksiyonlar:").pack(pady=5)
+        action_taken_text = tk.Text(add_window, height=4, width=40)
+        action_taken_text.pack(pady=5, padx=10, fill="x")
+
+        def save():
+            date = date_entry.get().strip()
+            time = time_entry.get().strip()
+            event_type = type_entry.get().strip()
+            description = description_text.get("1.0", tk.END).strip()
+            action_taken = action_taken_text.get("1.0", tk.END).strip()
+            
+            selected_person_text = affected_person_combobox.get()
+            affected_person_id = None
+            if selected_person_text != "Yok":
+                try:
+                    person_id_str = selected_person_text.split('(ID: ')[1].rstrip(')')
+                    affected_person_id = int(person_id_str)
+                except (IndexError, ValueError):
+                    messagebox.showerror("Hata", "Geçersiz personel seçimi formatı.")
+                    return
+
+            selected_equipment_text = affected_equipment_combobox.get()
+            affected_equipment_id = None
+            if selected_equipment_text != "Yok":
+                try:
+                    equipment_id_str = selected_equipment_text.split('(ID: ')[1].rstrip(')')
+                    affected_equipment_id = int(equipment_id_str)
+                except (IndexError, ValueError):
+                    messagebox.showerror("Hata", "Geçersiz ekipman seçimi formatı.")
+                    return
+
+            if date and time and event_type and description and action_taken:
+                self.db.execute_query(
+                    """INSERT INTO emergency_events 
+                       (date, time, type, description, affected_person, affected_equipment, action_taken) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""", 
+                    (date, time, event_type, description, affected_person_id, affected_equipment_id, action_taken)
+                )
+                messagebox.showinfo("Başarılı", "Acil durum kaydı başarıyla eklendi.")
+                self.load_emergency_data()
+                add_window.destroy()
+            else:
+                messagebox.showerror("Hata", "Tarih, Saat, Tür, Açıklama ve Alınan Aksiyon alanları boş bırakılamaz.")
+
+        tk.Button(add_window, text="Kaydet", command=save, bg="#28a745", fg="white", font=("Arial", 10, "bold")).pack(pady=10)
+        tk.Button(add_window, text="İptal", command=add_window.destroy, bg="#dc3545", fg="white", font=("Arial", 10)).pack(pady=5)
+
+    # --- Acil Durum Düzenleme ---
+    def edit_emergency(self):
+        selected_item = self.emergency_tree.focus()
+        if not selected_item:
+            messagebox.showwarning("Seçim Yok", "Lütfen düzenlemek istediğiniz bir acil durum kaydı seçin.")
+            return
+
+        values = self.emergency_tree.item(selected_item, 'values')
+        event_id = values[0]
+        
+        edit_window = tk.Toplevel(self.root)
+        edit_window.title("Acil Durum Kaydı Düzenle")
+        edit_window.geometry("450x550")
+
+        tk.Label(edit_window, text="Tarih (YYYY-MM-DD):").pack(pady=5)
+        date_entry = tk.Entry(edit_window)
+        date_entry.insert(0, values[1])
+        date_entry.pack(pady=5, padx=10, fill="x")
+
+        tk.Label(edit_window, text="Saat (HH:MM):").pack(pady=5)
+        time_entry = tk.Entry(edit_window)
+        time_entry.insert(0, values[2])
+        time_entry.pack(pady=5, padx=10, fill="x")
+
+        tk.Label(edit_window, text="Acil Durum Türü:").pack(pady=5)
+        type_entry = tk.Entry(edit_window)
+        type_entry.insert(0, values[3])
+        type_entry.pack(pady=5, padx=10, fill="x")
+
+        tk.Label(edit_window, text="Açıklama:").pack(pady=5)
+        description_text = tk.Text(edit_window, height=4, width=40)
+        description_text.insert("1.0", values[4])
+        description_text.pack(pady=5, padx=10, fill="x")
+
+        tk.Label(edit_window, text="Etkilenen Personel:").pack(pady=5)
+        personnel_data = self.db.fetch_all("SELECT id, name FROM personnel")
+        personnel_dict = {f"{p[1]} (ID: {p[0]})": p[0] for p in personnel_data}
+        personnel_names = list(personnel_dict.keys())
+        personnel_names.insert(0, "Yok")
+
+        affected_person_combobox = ttk.Combobox(edit_window, values=personnel_names)
+        # Mevcut atanan kişiyi combobox'ta seçili hale getir
+        current_affected_person = values[5] # 'Ad (ID: X)' veya 'Yok'
+        if current_affected_person in personnel_names:
+            affected_person_combobox.set(current_affected_person)
+        else:
+            affected_person_combobox.set("Yok")
+        affected_person_combobox.pack(pady=5, padx=10, fill="x")
+
+        tk.Label(edit_window, text="Etkilenen Ekipman:").pack(pady=5)
+        equipment_data = self.db.fetch_all("SELECT id, name FROM equipment")
+        equipment_dict = {f"{eq[1]} (ID: {eq[0]})": eq[0] for eq in equipment_data}
+        equipment_names = list(equipment_dict.keys())
+        equipment_names.insert(0, "Yok")
+
+        affected_equipment_combobox = ttk.Combobox(edit_window, values=equipment_names)
+        # Mevcut atanan ekipmanı combobox'ta seçili hale getir
+        current_affected_equipment = values[6] # 'Ad (ID: X)' veya 'Yok'
+        if current_affected_equipment in equipment_names:
+            affected_equipment_combobox.set(current_affected_equipment)
+        else:
+            affected_equipment_combobox.set("Yok")
+        affected_equipment_combobox.pack(pady=5, padx=10, fill="x")
+
+        tk.Label(edit_window, text="Alınan Aksiyonlar:").pack(pady=5)
+        action_taken_text = tk.Text(edit_window, height=4, width=40)
+        action_taken_text.insert("1.0", values[7])
+        action_taken_text.pack(pady=5, padx=10, fill="x")
+
+        def save():
+            date = date_entry.get().strip()
+            time = time_entry.get().strip()
+            event_type = type_entry.get().strip()
+            description = description_text.get("1.0", tk.END).strip()
+            action_taken = action_taken_text.get("1.0", tk.END).strip()
+
+            selected_person_text = affected_person_combobox.get()
+            affected_person_id = None
+            if selected_person_text != "Yok":
+                try:
+                    person_id_str = selected_person_text.split('(ID: ')[1].rstrip(')')
+                    affected_person_id = int(person_id_str)
+                except (IndexError, ValueError):
+                    messagebox.showerror("Hata", "Geçersiz personel seçimi formatı.")
+                    return
+
+            selected_equipment_text = affected_equipment_combobox.get()
+            affected_equipment_id = None
+            if selected_equipment_text != "Yok":
+                try:
+                    equipment_id_str = selected_equipment_text.split('(ID: ')[1].rstrip(')')
+                    affected_equipment_id = int(equipment_id_str)
+                except (IndexError, ValueError):
+                    messagebox.showerror("Hata", "Geçersiz ekipman seçimi formatı.")
+                    return
+
+            if date and time and event_type and description and action_taken:
+                self.db.execute_query(
+                    """UPDATE emergency_events SET 
+                       date=?, time=?, type=?, description=?, affected_person=?, affected_equipment=?, action_taken=? 
+                       WHERE id=?""", 
+                    (date, time, event_type, description, affected_person_id, affected_equipment_id, action_taken, event_id)
+                )
+                messagebox.showinfo("Başarılı", "Acil durum kaydı başarıyla güncellendi.")
+                self.load_emergency_data()
+                # Düğmeler
+                button_frame = tk.Frame(self.content_frame, bg="#ecf0f1")
+                button_frame.pack(pady=10)
+                tk.Button(button_frame, text="Yeni Acil Durum Kaydı", command=self.add_emergency).pack(side="left", padx=5)
+                tk.Button(button_frame, text="Acil Durum Düzenle", command=self.edit_emergency).pack(side="left", padx=5)
+                tk.Button(button_frame, text="Acil Durum Sil", command=self.delete_emergency).pack(side="left", padx=5)
+                edit_window.destroy()
+            else:
+                messagebox.showerror("Hata", "Tarih, Saat, Tür, Açıklama ve Alınan Aksiyon alanları boş bırakılamaz.")
+
+        tk.Button(edit_window, text="Kaydet", command=save, bg="#28a745", fg="white", font=("Arial", 10, "bold")).pack(pady=10)
+        tk.Button(edit_window, text="İptal", command=edit_window.destroy, bg="#dc3545", fg="white", font=("Arial", 10)).pack(pady=5)
+
+    # --- Acil Durum Silme ---
+    def delete_emergency(self):
+        selected_item = self.emergency_tree.focus()
+        if not selected_item:
+            messagebox.showwarning("Seçim Yok", "Lütfen silmek istediğiniz bir acil durum kaydı seçin.")
+            return
+
+        values = self.emergency_tree.item(selected_item, 'values')
+        event_id = values[0]
+        event_type = values[3]
+        event_date = values[1]
+
+        if messagebox.askyesno("Onay", f"'{event_date} tarihli {event_type}' türündeki acil durum kaydını ({event_id} ID'li) silmek istediğinizden emin misiniz? Bu işlem geri alınamaz."):
+            self.db.execute_query("DELETE FROM emergency_events WHERE id=?", (event_id,))
+            messagebox.showinfo("Başarılı", "Acil durum kaydı başarıyla silindi.")
+            self.load_emergency_data()
+        else:
+            messagebox.showinfo("İptal Edildi", "Acil durum kaydı silme işlemi iptal edildi.")
+
+    # --- Raporlar Modülü ---
+    def show_reports_module(self):
         self.clear_content_frame()
-        tk.Label(self.content_frame, text="Raporlama Modülü", font=("Arial", 16, "bold"), bg="#ecf0f1").pack(pady=20)
-        tk.Label(self.content_frame, text="Bu bölüm CSV/PDF raporlama özelliklerini içerecektir.", bg="#ecf0f1").pack(pady=10)
+        tk.Label(self.content_frame, text="Raporlar Modülü", font=("Arial", 16, "bold"), bg="#ecf0f1").pack(pady=20)
+        
+        # Buraya raporlama ile ilgili widget'ları ekleyebilirsiniz.
+        # Örneğin, farklı rapor türleri için butonlar veya tarih seçiciler.
+        tk.Label(self.content_frame, text="Bu bölümde çeşitli raporları görüntüleyebilir ve dışa aktarabilirsiniz.", bg="#ecf0f1").pack(pady=10)
+        tk.Label(self.content_frame, text="Geliştirme aşamasındadır...", bg="#ecf0f1", fg="gray").pack(pady=5)
