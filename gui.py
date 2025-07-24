@@ -103,65 +103,77 @@ class MetroSantiyeApp:
         tk.Button(add_window, text="Kaydet", command=save, bg="#28a745", fg="white", font=("Arial", 10, "bold")).pack(pady=10)
         tk.Button(add_window, text="İptal", command=add_window.destroy, bg="#dc3545", fg="white", font=("Arial", 10)).pack(pady=5)
     def edit_personnel(self):
-        selected_item = self.personnel_tree.focus()
-        if not selected_item:
+        selected_item = self.personnel_tree.focus() # Seçili öğeyi al
+        if not selected_item: # Hiçbir öğe seçili değilse uyar
             messagebox.showwarning("Seçim Yok", "Lütfen düzenlemek istediğiniz bir personel seçin.")
             return
 
-        values = self.personnel_tree.item(selected_item, 'values')
-        person_id = values[0]
+        values = self.personnel_tree.item(selected_item, 'values') # Seçili öğenin değerlerini al
+        person_id = values[0] # ID ilk değer
 
+        # Düzenleme penceresi oluştur
         edit_window = tk.Toplevel(self.root)
         edit_window.title("Personel Düzenle")
-        edit_window.geometry("300x200")
+        edit_window.geometry("300x250") # Pencere boyutunu ayarla
 
+        # Etiketler ve Giriş Alanları, mevcut değerlerle doldur
         tk.Label(edit_window, text="Ad:").pack(pady=5)
         name_entry = tk.Entry(edit_window)
-        name_entry.insert(0, values[1])
-        name_entry.pack(pady=5)
+        name_entry.insert(0, values[1]) # Mevcut adı önceden doldur
+        name_entry.pack(pady=5, padx=10, fill="x")
 
         tk.Label(edit_window, text="Görev:").pack(pady=5)
         role_entry = tk.Entry(edit_window)
-        role_entry.insert(0, values[2])
-        role_entry.pack(pady=5)
+        role_entry.insert(0, values[2]) # Mevcut görevi önceden doldur
+        role_entry.pack(pady=5, padx=10, fill="x")
 
         tk.Label(edit_window, text="Vardiya:").pack(pady=5)
         shift_entry = tk.Entry(edit_window)
-        shift_entry.insert(0, values[3])
-        shift_entry.pack(pady=5)
+        shift_entry.insert(0, values[3]) # Mevcut vardiyayı önceden doldur
+        shift_entry.pack(pady=5, padx=10, fill="x")
 
+        # Kaydet butonu
         def save():
-            name = name_entry.get()
-            role = role_entry.get()
-            shift = shift_entry.get()
-            if name and role:
+            name = name_entry.get().strip()
+            role = role_entry.get().strip()
+            shift = shift_entry.get().strip()
+
+            if name and role: # Ad ve Görev alanlarının boş olup olmadığını kontrol et
                 self.db.execute_query("UPDATE personnel SET name=?, role=?, shift=? WHERE id=?", (name, role, shift, person_id))
                 messagebox.showinfo("Başarılı", "Personel başarıyla güncellendi.")
-                self.load_personnel_data()
-                edit_window.destroy()
+                self.load_personnel_data() # Personel listesini yenile
+                edit_window.destroy() # Pencereyi kapat
             else:
                 messagebox.showerror("Hata", "Ad ve Görev alanları boş bırakılamaz.")
 
-        tk.Button(edit_window, text="Kaydet", command=save).pack(pady=10)
-
+        tk.Button(edit_window, text="Kaydet", command=save, bg="#28a745", fg="white", font=("Arial", 10, "bold")).pack(pady=10)
+        tk.Button(edit_window, text="İptal", command=edit_window.destroy, bg="#dc3545", fg="white", font=("Arial", 10)).pack(pady=5)
 
     def delete_personnel(self):
-        selected_item = self.personnel_tree.focus()
-        if not selected_item:
+        selected_item = self.personnel_tree.focus() # Seçili öğeyi al
+        if not selected_item: # Hiçbir öğe seçili değilse uyar
             messagebox.showwarning("Seçim Yok", "Lütfen silmek istediğiniz bir personel seçin.")
             return
 
-        values = self.personnel_tree.item(selected_item, 'values')
+        values = self.personnel_tree.item(selected_item, 'values') # Seçili öğenin değerlerini al
         person_id = values[0]
+        person_name = values[1]
 
-        if messagebox.askyesno("Onay", f"'{values[1]}' adlı personeli silmek istediğinizden emin misiniz?"):
-            # Personel silinmeden önce zimmetli ekipmanı veya atanmış görevi olup olmadığı kontrol edilebilir
-            # Basitlik adına burada doğrudan silme işlemi yapılıyor.
+        # Kullanıcıya onay sor
+        if messagebox.askyesno("Onay", f"'{person_name}' ({person_id} ID'li) personeli silmek istediğinizden emin misiniz? Bu işlem geri alınamaz."):
+            # Önce bu personele atanmış ekipmanları veya görevleri güncelle
+            # FOREIGN KEY ON DELETE SET NULL yaptığımız için bu satırlar aslında çok gerekli değil
+            # ancak ek bir güvenlik katmanı olarak düşünülebilir veya başka durumlar için faydalı olabilir.
+            # Örneğin, sildikten sonra ne olduğunu kullanıcıya bildirmek için.
+            self.db.execute_query("UPDATE equipment SET assigned_to = NULL WHERE assigned_to = ?", (person_id,))
+            self.db.execute_query("UPDATE tasks SET assigned_person = NULL WHERE assigned_person = ?", (person_id,))
+
+            # Personeli sil
             self.db.execute_query("DELETE FROM personnel WHERE id=?", (person_id,))
             messagebox.showinfo("Başarılı", "Personel başarıyla silindi.")
-            self.load_personnel_data()
-
-    # --- Diğer Modüller (geçici yer tutucular) ---
+            self.load_personnel_data() # Personel listesini yenile
+        else:
+            messagebox.showinfo("İptal Edildi", "Personel silme işlemi iptal edildi.")
     def show_equipment_module(self):
         self.clear_content_frame()
         tk.Label(self.content_frame, text="Ekipman Zimmet Modülü", font=("Arial", 16, "bold"), bg="#ecf0f1").pack(pady=20)
