@@ -1,18 +1,23 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
-from datetime import datetime # Bu satırı eklediğimizden emin olalım!
-import os
-from database import Database #
+from tkinter import ttk, messagebox, filedialog # filedialog burada önemli, dosya kaydetme penceresi için!
+from database import Database # Database sınıfınızı kullanmak için gerekli
+from datetime import datetime # Rapor dosyalarına tarih/saat eklemek için gerekli
+import os # Eğer raporları kaydederken klasör oluşturma/yol işlemleri yapacaksanız ekleyebilirsiniz, zorunlu değil ama iyi bir pratik olabilir.
 
 class MetroSantiyeApp:
-    def __init__(self, root, db):
+    def __init__(self, root): # Burada SADECE 'root' argümanı olmalı
         self.root = root
         self.root.title("Metro Şantiye Takip Sistemi")
-        self.db = db
-     # Veritabanı bağlantısı
+        
+        # Veritabanı bağlantısını sınıfın KENDİ içinde oluşturun
+        # Data klasörünü kontrol et ve oluştur
+        import os # Eğer henüz en üstte import etmediyseniz burada da edebilirsiniz
         if not os.path.exists("data"):
             os.makedirs("data")
-        self.db = Database("data/santiye.db") # BU SATIRIN DOĞRU VE AKTİF OLDUĞUNDAN EMİN OLUN!
+        
+        from database import Database # Database sınıfını burada import ediyoruz
+        self.db = Database("data/santiye.db") # Database nesnesi burada oluşturuluyor.
+        self.db.create_tables() # Tabloları da burada oluşturalım.
         
         self.create_widgets()
 
@@ -755,7 +760,7 @@ class MetroSantiyeApp:
 
         # --- Etkilenen Personel Combobox ---
         tk.Label(add_window, text="Etkilenen Personel:", font=label_font, bg="#ecf0f1").pack(pady=(10,0))
-        personnel_data = self.db.fetch_all("SELECT id, name, surname FROM personnel")
+        personnel_data = self.db.fetch_all("SELECT id, name,role,shift FROM personnel")
         personnel_options = [""] + [f"{p[1]} {p[2]} (ID: {p[0]})" for p in personnel_data] # Personel adlarını ve ID'lerini çek, başına boş seçenek ekle
         personnel_combobox = ttk.Combobox(add_window, values=personnel_options, state="readonly", width=entry_width - 2) # Combobox genişliği Entry'den biraz küçük olabilir
         personnel_combobox.pack(pady=pady_value)
@@ -951,10 +956,353 @@ class MetroSantiyeApp:
                 messagebox.showerror("Hata", f"Acil durum kaydı silinirken bir hata oluştu: {e}")
     # --- Raporlar Modülü ---
     def show_reports_module(self):
-        self.clear_content_frame()
+        self.clear_content_frame() # Önceki içeriği temizle
         tk.Label(self.content_frame, text="Raporlar Modülü", font=("Arial", 16, "bold"), bg="#ecf0f1").pack(pady=20)
         
-        # Buraya raporlama ile ilgili widget'ları ekleyebilirsiniz.
-        # Örneğin, farklı rapor türleri için butonlar veya tarih seçiciler.
-        tk.Label(self.content_frame, text="Bu bölümde çeşitli raporları görüntüleyebilir ve dışa aktarabilirsiniz.", bg="#ecf0f1").pack(pady=10)
-        tk.Label(self.content_frame, text="Geliştirme aşamasındadır...", bg="#ecf0f1", fg="gray").pack(pady=5)
+        # Rapor seçenekleri çerçevesi
+        control_frame = ttk.LabelFrame(self.content_frame, text="Rapor Seçenekleri")
+        control_frame.pack(padx=10, pady=10, fill="x", expand=False)
+
+        # Rapor Tipi Seçimi
+        ttk.Label(control_frame, text="Rapor Tipi:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        
+        self.rapor_tipleri = [
+            "Tüm Personel Listesi",
+            "Tüm Ekipman Listesi",
+            "Tüm Görevler Listesi",
+            "Tüm Acil Durumlar",
+            "Personel Görev Raporu",
+            "Ekipman Atanmış Personel Raporu"
+            # Buraya daha fazla rapor tipi eklenebilir
+        ]
+        self.rapor_secimi_cb = ttk.Combobox(control_frame, values=self.rapor_tipleri, state="readonly")
+        self.rapor_secimi_cb.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        self.rapor_secimi_cb.set(self.rapor_tipleri[0]) # Varsayılan olarak ilk raporu seç
+        self.rapor_secimi_cb.bind("<<ComboboxSelected>>", self.on_rapor_type_select) # Seçim değiştiğinde tetiklenecek
+
+        # Rapor Oluştur Butonu
+        ttk.Button(control_frame, text="Rapor Oluştur", command=self.generate_report).grid(row=0, column=2, padx=5, pady=5)
+        
+        # Rapor Çıktısı Çerçevesi
+        output_frame = ttk.LabelFrame(self.content_frame, text="Rapor Çıktısı")
+        output_frame.pack(padx=10, pady=5, fill="both", expand=True)
+
+        # Rapor Treeview'ı (çıktı alanı)
+        self.report_tree = ttk.Treeview(output_frame, show="headings")
+        self.report_tree.pack(side="left", fill="both", expand=True)
+
+        # Scrollbar ekleme
+        report_scrollbar_y = ttk.Scrollbar(output_frame, orient="vertical", command=self.report_tree.yview)
+        report_scrollbar_y.pack(side="right", fill="y")
+        self.report_tree.configure(yscrollcommand=report_scrollbar_y.set)
+
+        report_scrollbar_x = ttk.Scrollbar(output_frame, orient="horizontal", command=self.report_tree.xview)
+        report_scrollbar_x.pack(side="bottom", fill="x")
+        self.report_tree.configure(xscrollcommand=report_scrollbar_x.set)
+
+        # Dışa Aktar Butonları Çerçevesi
+        export_frame = ttk.LabelFrame(self.content_frame, text="Raporu Dışa Aktar")
+        export_frame.pack(padx=10, pady=5, fill="x", expand=False)
+
+        ttk.Button(export_frame, text="Excel'e Aktar", command=lambda: self.export_report("excel")).grid(row=0, column=0, padx=5, pady=5)
+        ttk.Button(export_frame, text="PDF'e Aktar", command=lambda: self.export_report("pdf")).grid(row=0, column=1, padx=5, pady=5)
+        ttk.Button(export_frame, text="Metin Dosyasına Aktar", command=lambda: self.export_report("txt")).grid(row=0, column=2, padx=5, pady=5)
+        
+        # Seçilen rapor tipine göre Treeview sütunlarını güncellemek için başlangıçta çağır
+        self.on_rapor_type_select(None) # None ile çağırabiliriz çünkü event objesine ihtiyacımız yok
+
+    def on_rapor_type_select(self, event):
+        # Treeview'ın sütunlarını seçilen rapor tipine göre ayarlar
+        selected_report = self.rapor_secimi_cb.get()
+        
+        # Mevcut sütunları temizle
+        self.report_tree.delete(*self.report_tree.get_children())
+        self.report_tree["columns"] = ()
+        self.report_tree["displaycolumns"] = ()
+
+        if selected_report == "Tüm Personel Listesi":
+            columns = ("ID", "Ad", "Rol", "Vardiya")
+            widths = (50, 150, 100, 100)
+        elif selected_report == "Tüm Ekipman Listesi":
+            columns = ("ID", "Ekipman Adı", "Atanan Personel", "Durum")
+            widths = (50, 150, 150, 100)
+        elif selected_report == "Tüm Görevler Listesi":
+            columns = ("ID", "Görev Adı", "Atanan Kişi", "Son Teslim Tarihi", "Durum")
+            widths = (50, 200, 150, 100, 100)
+        elif selected_report == "Tüm Acil Durumlar":
+            columns = ("ID", "Tarih", "Saat", "Olay Tipi", "Açıklama", "Etkilenen Personel", "Etkilenen Ekipman", "Alınan Önlem")
+            widths = (50, 100, 80, 120, 200, 200, 200, 200)
+        elif selected_report == "Personel Görev Raporu":
+            columns = ("Personel Adı", "Görev Adı", "Son Teslim Tarihi", "Durum")
+            widths = (150, 200, 100, 100)
+        elif selected_report == "Ekipman Atanmış Personel Raporu":
+            columns = ("Ekipman Adı", "Atanan Personel", "Ekipman Durumu")
+            widths = (150, 150, 100)
+        else: # Varsayılan veya bilinmeyen rapor tipi
+            columns = ("Bilgi")
+            widths = (300)
+
+        self.report_tree["columns"] = columns
+        for col, width in zip(columns, widths):
+            self.report_tree.heading(col, text=col)
+            self.report_tree.column(col, width=width, anchor="w")
+
+    def generate_report(self):
+        # Mevcut verileri temizle
+        for item in self.report_tree.get_children():
+            self.report_tree.delete(item)
+
+        selected_report = self.rapor_secimi_cb.get()
+        data = []
+
+        if selected_report == "Tüm Personel Listesi":
+            data = self.db.fetch_all("SELECT id, name, role, shift FROM personnel")
+        elif selected_report == "Tüm Ekipman Listesi":
+            # Ekipman için atanan personelin adını da çekmek için JOIN
+            data = self.db.fetch_all("""
+                SELECT
+                    e.id,
+                    e.name,
+                    p.name AS assigned_personnel_name,
+                    e.status
+                FROM
+                    equipment e
+                LEFT JOIN
+                    personnel p ON e.assigned_to = p.id
+            """)
+        elif selected_report == "Tüm Görevler Listesi":
+            # Görevler için atanan kişinin adını da çekmek için JOIN
+            data = self.db.fetch_all("""
+                SELECT
+                    t.id,
+                    t.task_name,
+                    p.name AS assigned_person_name,
+                    t.deadline,
+                    t.status
+                FROM
+                    tasks t
+                LEFT JOIN
+                    personnel p ON t.assigned_person = p.id
+            """)
+        elif selected_report == "Tüm Acil Durumlar":
+            # Acil Durumlar için personel ve ekipman adlarını Python'da işlemek üzere ID'leri çek
+            raw_emergency_data = self.db.fetch_all("""
+                SELECT
+                    ee.id,
+                    ee.date,
+                    ee.time,
+                    ee.event_type,
+                    ee.description,
+                    ee.affected_personnel_ids,
+                    ee.affected_equipment_ids,
+                    ee.action_taken
+                FROM
+                    emergency_events ee
+                ORDER BY
+                    ee.date DESC, ee.time DESC
+            """)
+            
+            # Python'da işleme (önceki düzeltmelerimizdeki gibi)
+            for event in raw_emergency_data:
+                event_id, date, time, event_type, description, personnel_ids_str, equipment_ids_str, action_taken = event
+
+                affected_personnel_display = ""
+                if personnel_ids_str: # None veya boş string kontrolü
+                    personnel_ids = []
+                    for p_id_str in personnel_ids_str.split(','):
+                        try:
+                            personnel_ids.append(int(p_id_str.strip()))
+                        except ValueError:
+                            continue
+                    
+                    personel_names = []
+                    for p_id in personnel_ids:
+                        personnel_info = self.db.get_personnel_by_id(p_id)
+                        if personnel_info:
+                            personel_names.append(f"{personnel_info[1]} (ID: {p_id})") # personnel_info[1] is 'name'
+                    affected_personnel_display = ", ".join(personel_names)
+                
+                affected_equipment_display = ""
+                if equipment_ids_str: # None veya boş string kontrolü
+                    equipment_ids = []
+                    for e_id_str in equipment_ids_str.split(','):
+                        try:
+                            equipment_ids.append(int(e_id_str.strip()))
+                        except ValueError:
+                            continue
+
+                    equipment_names = []
+                    for e_id in equipment_ids:
+                        equipment_info = self.db.get_equipment_by_id(e_id)
+                        if equipment_info:
+                            equipment_names.append(f"{equipment_info[1]} (ID: {e_id})") # equipment_info[1] is 'name'
+                    affected_equipment_display = ", ".join(equipment_names)
+                
+                data.append((event_id, date, time, event_type, description, affected_personnel_display, affected_equipment_display, action_taken))
+
+        elif selected_report == "Personel Görev Raporu":
+            data = self.db.fetch_all("""
+                SELECT
+                    p.name AS personnel_name,
+                    t.task_name,
+                    t.deadline,
+                    t.status
+                FROM
+                    tasks t
+                LEFT JOIN
+                    personnel p ON t.assigned_person = p.id
+                ORDER BY
+                    p.name, t.deadline
+            """)
+        elif selected_report == "Ekipman Atanmış Personel Raporu":
+            data = self.db.fetch_all("""
+                SELECT
+                    e.name AS equipment_name,
+                    p.name AS assigned_personnel_name,
+                    e.status
+                FROM
+                    equipment e
+                LEFT JOIN
+                    personnel p ON e.assigned_to = p.id
+                ORDER BY
+                    e.name
+            """)
+        # Treeview'a verileri ekle
+        for row in data:
+            self.report_tree.insert("", "end", values=row)
+
+        if not data:
+            self.report_tree.insert("", "end", values=("Gösterilecek veri bulunamadı.",))
+
+
+    def export_report(self, format_type):
+        selected_report = self.rapor_secimi_cb.get()
+        # Treeview'daki tüm veriyi al
+        headers = [self.report_tree.heading(col)["text"] for col in self.report_tree["columns"]]
+        data_to_export = [self.report_tree.item(item)["values"] for item in self.report_tree.get_children()]
+
+        if not data_to_export:
+            messagebox.showinfo("Bilgi", "Dışa aktarılacak veri bulunamadı.")
+            return
+
+        file_name = f"{selected_report.replace(' ', '_')}_Rapor_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        if format_type == "excel":
+            try:
+                # openpyxl kütüphanesini yüklemeniz gerekebilir: pip install openpyxl
+                from openpyxl import Workbook # BURAYA DİKKAT: Fonksiyon içinde import!
+                wb = Workbook()
+                ws = wb.active
+                ws.title = selected_report
+
+                ws.append(headers) # Başlıkları ekle
+                for row in data_to_export:
+                    ws.append(row)
+                
+                filepath = filedialog.asksaveasfilename(defaultextension=".xlsx",
+                                                        filetypes=[("Excel files", "*.xlsx")],
+                                                        initialfile=file_name)
+                if filepath:
+                    wb.save(filepath)
+                    messagebox.showinfo("Başarılı", f"Rapor Excel olarak kaydedildi:\n{filepath}")
+            except ImportError:
+                messagebox.showerror("Hata", "openpyxl kütüphanesi yüklü değil. 'pip install openpyxl' komutunu çalıştırın.")
+            except Exception as e:
+                messagebox.showerror("Hata", f"Excel'e aktarılırken bir hata oluştu: {e}")
+
+        # gui.py dosyasında, export_report fonksiyonunun içinde, format_type == "pdf" bloğu
+    def export_report(self, format_type):
+        selected_report = self.rapor_secimi_cb.get()
+        headers = [self.report_tree.heading(col)["text"] for col in self.report_tree["columns"]]
+        data_to_export = [self.report_tree.item(item)["values"] for item in self.report_tree.get_children()]
+
+        if not data_to_export:
+            messagebox.showinfo("Bilgi", "Dışa aktarılacak veri bulunamadı.")
+            return
+
+        file_name = f"{selected_report.replace(' ', '_')}_Rapor_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        if format_type == "excel":
+            try:
+                from openpyxl import Workbook
+                wb = Workbook()
+                ws = wb.active
+                ws.title = selected_report
+
+                ws.append(headers)
+                for row in data_to_export:
+                    ws.append(row)
+                
+                filepath = filedialog.asksaveasfilename(defaultextension=".xlsx",
+                                                        filetypes=[("Excel files", "*.xlsx")],
+                                                        initialfile=file_name)
+                if filepath:
+                    wb.save(filepath)
+                    messagebox.showinfo("Başarılı", f"Rapor Excel olarak kaydedildi:\n{filepath}")
+            except ImportError:
+                messagebox.showerror("Hata", "openpyxl kütüphanesi yüklü değil. 'pip install openpyxl' komutunu çalıştırın.")
+            except Exception as e:
+                messagebox.showerror("Hata", f"Excel'e aktarılırken bir hata oluştu: {e}")
+
+        elif format_type == "pdf": # Bu blok kendi içinde doğru girintiye sahip
+            try:
+                from fpdf import FPDF 
+                
+                pdf = FPDF()
+                pdf.add_page()
+                
+                font_path = "DejaVuSansCondensed.ttf" # Veya "fonts/DejaVuSansCondensed.ttf"
+
+                pdf.add_font("DejaVuSans", "", font_path, uni=True)
+                pdf.set_font("DejaVuSans", size=10)
+
+                pdf.cell(200, 10, txt=selected_report, ln=True, align="C")
+                pdf.ln(5)
+
+                col_widths = []
+                for h in headers:
+                    col_widths.append(pdf.get_string_width(h) + 10) 
+                
+                total_width = sum(col_widths)
+                page_width = pdf.w - 2*pdf.l_margin
+                scale_factor = page_width / total_width
+                
+                adjusted_col_widths = [w * scale_factor for w in col_widths]
+
+                for i, header in enumerate(headers):
+                    pdf.cell(adjusted_col_widths[i], 10, header, 1, 0, 'C')
+                pdf.ln()
+
+                for row_data in data_to_export:
+                    for i, cell_data in enumerate(row_data):
+                        cell_text = str(cell_data) 
+                        pdf.cell(adjusted_col_widths[i], 10, cell_text, 1, 0, 'L')
+                    pdf.ln()
+
+                filepath = filedialog.asksaveasfilename(defaultextension=".pdf",
+                                                        filetypes=[("PDF files", "*.pdf")],
+                                                        initialfile=file_name)
+                if filepath:
+                    pdf.output(filepath)
+                    messagebox.showinfo("Başarılı", f"Rapor PDF olarak kaydedildi:\n{filepath}")
+
+            except ImportError:
+                messagebox.showerror("Hata", "fpdf kütüphanesi yüklü değil. 'pip install fpdf' komutunu çalıştırın.")
+            except FileNotFoundError:
+                messagebox.showerror("Hata", f"Font dosyası bulunamadı: {font_path}\nLütfen font dosyasının doğru yolda olduğundan emin olun.")
+            except Exception as e:
+                messagebox.showerror("Hata", f"PDF'e aktarılırken bir hata oluştu: {e}")
+
+        elif format_type == "txt": # Bu blok da önceki if/elif ile aynı hizadan başlamalı
+            try:
+                filepath = filedialog.asksaveasfilename(defaultextension=".txt",
+                                                        filetypes=[("Text files", "*.txt")],
+                                                        initialfile=file_name)
+                if filepath:
+                    with open(filepath, "w", encoding="utf-8") as f:
+                        f.write("\t".join(headers) + "\n") # Başlıkları tab ile ayır
+                        for row in data_to_export:
+                            f.write("\t".join(map(str, row)) + "\n") # Verileri tab ile ayır
+                    messagebox.showinfo("Başarılı", f"Rapor metin dosyası olarak kaydedildi:\n{filepath}")
+            except Exception as e:
+                messagebox.showerror("Hata", f"Metin dosyasına aktarılırken bir hata oluştu: {e}")
